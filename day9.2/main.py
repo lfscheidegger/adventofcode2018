@@ -75,9 +75,9 @@ class Node:
         self.right = None
         self.left = None
 
-    @statimethod
-    def single_node():
-        n = Node()
+    @staticmethod
+    def single_node(marble):
+        n = Node(marble)
         n.right = n
         n.left = n
         return n
@@ -93,10 +93,12 @@ class Node:
         return self.left.counterclockwise(n - 1)
 
     def add_to_right(self, to_add):
-        if self.right is Self:
+        if self.right is self:
             # Degenerate case for single-element list
-            to_add.left = self.
+            to_add.left = self
+            to_add.right = self
             self.right = to_add
+            self.left = to_add
         else:
             old_right = self.right
             old_right.left = to_add            
@@ -104,9 +106,26 @@ class Node:
             to_add.left = self        
             self.right = to_add
 
-    def __repr__(self):
-        
+    def remove(self):
+        if self.right is self:
+            raise Error("Can't remove the last element from list")
+        else:
+            old_left = self.left
+            old_right = self.right
+            old_left.right = old_right
+            old_right.left = old_left
 
+    def __repr__(self):
+        if self.right == self:
+            return "Node(%d)" % self.marble
+        else:
+            tail = self.right
+            marbles = [self.marble]
+            while tail is not self:
+                marbles.append(tail.marble)
+                tail = tail.right
+            return "Node(%s)" % ", ".join(str(x) for x in marbles)
+            
 
 def get_inputs():
     result = []
@@ -119,14 +138,28 @@ def get_inputs():
 
 
 def solve(input):
-    board = Node(0)
-    current_marble = 0
+    board = Node.single_node(0)
+    current_marble_node = board
     next_marble_to_place = 1
     scores = list(0 for idx in range(input.n_players))
     current_player = -1
 
     while next_marble_to_place <= input.last_marble_value:
-        break
+        # print next_marble_to_place, current_player, current_marble_node.marble, board
+        if next_marble_to_place % 23 == 0:
+            scores[current_player] += next_marble_to_place
+            seven_to_left = current_marble_node.counterclockwise(7)
+            current_marble_node = seven_to_left.clockwise(1)
+            scores[current_player] += seven_to_left.marble
+            seven_to_left.remove()
+
+        else:
+            to_right = current_marble_node.clockwise(1)
+            current_marble_node = Node(next_marble_to_place)
+            to_right.add_to_right(current_marble_node)
+            
+        next_marble_to_place += 1
+        current_player = (current_player + 1) % input.n_players
         """
         one_to_clockwise = (board.index(current_marble) + 1) % len(board)
         if next_marble_to_place % 23 == 0:
