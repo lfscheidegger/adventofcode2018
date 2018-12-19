@@ -155,6 +155,12 @@ import re
 import sys
 import time
 
+import numpy as np
+
+from OpenGL.GL import *
+from OpenGL.GLU import *
+from OpenGL.GLUT import *
+
 HORIZONTAL_LINE_REGEX = re.compile(r"y=(\d+), x=(\d+)\.\.(\d+)")
 VERTICAL_LINE_REGEX = re.compile(r"x=(\d+), y=(\d+)\.\.(\d+)")
 
@@ -193,12 +199,43 @@ def get_input():
 
 
 class Board:
+    board_texture = None
+    board_np_array = None
+    
     def __init__(self, tiles, min_x, max_x, min_y, max_y):
         self.tiles = tiles
         self.min_x = min_x
         self.max_x = max_x
         self.min_y = min_y
         self.max_y = max_y
+
+        width = len(self.tiles[0])
+        height = len(self.tiles)
+        self.board_np_array = np.zeros(shape=(width * height * 3, 1), dtype=np.uint8)
+        
+        for y in range(height):
+            for x in range(width):
+                tile = self.tiles[y][x]
+                if tile == '#':
+                    red = 255
+                    green = 0
+                    blue = 0
+                elif tile == '~':
+                    red = 0
+                    green = 0
+                    blue = 255
+                elif tile == '|':
+                    red = 128
+                    green = 128
+                    blue = 255
+                else:
+                    red = 0
+                    green = 0
+                    blue = 0
+                idx = width * y + x
+                self.board_np_array[3*idx] = red
+                self.board_np_array[3*idx + 1] = green
+                self.board_np_array[3*idx + 2] = blue
         
     def __repr__(self):
         result = "\n"
@@ -207,7 +244,32 @@ class Board:
         return "Board(tiles=%s, min_x=%s, max_x=%s, min_y=%s, max_y=%s)" % (result, self.min_x, self.max_x, self.min_y, self.max_y)
 
     def stamp(self, character, x, y):
+        width = len(self.tiles[0])
+        idx = width * y + x
+        
         self.tiles[y] = self.tiles[y][:x] + character + self.tiles[y][x + 1:]
+
+        tile = self.tiles[y][x]
+        if tile == '#':
+            red = 255
+            green = 0
+            blue = 0
+        elif tile == '~':
+            red = 0
+            green = 0
+            blue = 255
+        elif tile == '|':
+            red = 128
+            green = 128
+            blue = 255
+        else:
+            red = 0
+            green = 0
+            blue = 0
+        idx = width * y + x
+        self.board_np_array[3*idx] = red
+        self.board_np_array[3*idx + 1] = green
+        self.board_np_array[3*idx + 2] = blue        
 
     def count_water(self):
         result = 0
@@ -216,6 +278,41 @@ class Board:
                 result += 1 if tile in ['|', '~'] else 0
         return result
 
+    def gl_draw(self):
+        width = len(self.tiles[0])
+        height = len(self.tiles)
+        if Board.board_texture is None:
+            Board.board_texture = glGenTextures(1)
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+            glBindTexture(GL_TEXTURE_2D, Board.board_texture)
+            
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            glBindTexture(GL_TEXTURE_2D, 0)
+
+            Board.board_np_array = np.zeros(shape=(width * height * 3, 1), dtype=np.uint8)
+
+        glBindTexture(GL_TEXTURE_2D, Board.board_texture)    
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, self.board_np_array)
+        
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 1)
+        glVertex2f(-1, -1)
+        
+        glTexCoord2f(1, 1)
+        glVertex2f(1, -1)
+        
+        glTexCoord2f(1, 0)
+        glVertex2f(1, 1)
+        
+        glTexCoord2f(0, 0)
+        glVertex2f(-1, 1)
+        glEnd()
+
+        glBindTexture(GL_TEXTURE_2D, 0)        
+        
 
 class FallingFront:
     """
@@ -308,11 +405,13 @@ def solve(board):
         falling_fronts.clear()
         for falling_front in round_fronts:
             falling_front.advance(board)
+            yield board
             y = falling_front.max_y
             if y < height - 1:
                 while y >= 0:
                     filling_front = FillingFront(falling_front.x, falling_front.x, y)
                     next_falling_fronts = filling_front.advance(board)
+                    yield board
                     if next_falling_fronts != []:
                         for next_falling_front in next_falling_fronts:
                             falling_fronts[(next_falling_front.x, next_falling_front.min_y, next_falling_front.max_y)] = next_falling_front
@@ -323,10 +422,60 @@ def solve(board):
 
     print 'Result', board.count_water()
     print len(board.tiles), len(board.tiles[0])
-        
+
+def display_func():
+    global solution
+    try:
+        board = next(solution)
+        glClear(GL_COLOR_BUFFER_BIT)
+        board.gl_draw()
+        glutSwapBuffers()
+        glutPostRedisplay()
+    except StopIteration:
+        pass
+
+def keyboard_func(key, x, y):
+    key = key.lower()
+    if key == 'q':
+        sys.exit(0)
+
+def init_gl(board):
+    glutInit(sys.argv)
+    glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE)
+
+    max_window_dimension = 1024
+    board_width = len(board.tiles[0])
+    board_height = len(board.tiles)
+
+    width = float(board_width)
+    height = float(board_height)
+    if width > max_window_dimension:
+        height /= (width / max_window_dimension)
+        width = max_window_dimension
+    if height > max_window_dimension:
+        width /= (height / max_window_dimension)
+        height = max_window_dimension
+
+    
+    glutInitWindowSize(int(width), int(height))
+
+    glutCreateWindow('Cave water')
+
+    glutDisplayFunc(display_func)
+    glutKeyboardFunc(keyboard_func)
+    # glutReshapeFunc(reshape_func)
+    # glutIdleFunc(idle_func)
+
+    glEnable(GL_TEXTURE_2D)
+
+    glutMainLoop()    
+
+solution = None
 def main():
+    global solution
     board = get_input()
-    solve(board)
+    solution = solve(board)
+    init_gl(board)
 
 
 if __name__ == "__main__":
